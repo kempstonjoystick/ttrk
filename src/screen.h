@@ -21,6 +21,10 @@
 
 #include <song.h>
 #include <sys/timeb.h>
+#include <mqueue.h>
+
+#define MSGQOBJ_NAME    "/jackMidiIn"
+#define JACK_MIDI_PRIO 10
 
 class PatBar;
 class ChanBar;
@@ -39,8 +43,9 @@ class Screen
 public:
 	Screen( void );
 	~Screen( void );
-
 	bool pollScreen( void );
+	void queueInit(void);
+	void queueCheck(void);
 	void refresh( void ) const;
 	void refresh_bars( void );
 	void showStatusMessage( const char *newmsg );
@@ -52,6 +57,9 @@ public:
 		HeaderSize = 7,
 		BottomSize = 2
 	};
+
+
+	mqd_t msgq_id;
 
 	enum Colours {
 		DefaultColour = 0,
@@ -85,6 +93,7 @@ private:
 	int **copySongRows;
 	int markedRow;
 	int msg_visible;
+	bool record;
 
 	// Support for "jamming".  While in song mode, you 
 	// can use the note keys to play the current instrument in realtime.
@@ -100,6 +109,7 @@ private:
 	void printHelp( void );
 
 	void setNote( int newnote );
+	void setNoteNoWait( int newnote );
 	void setController( void );
 	void moveCursorPosition( int newrow, int newcol );
 	void setPosition( int newpos );

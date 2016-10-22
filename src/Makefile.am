@@ -1,5 +1,6 @@
 
 AM_CXXFLAGS = -Wall -pedantic -DENABLE_SLFUTURE_CONST
+AM_LDFLAGS = -lrt
 bin_PROGRAMS = ttrk
 ttrk_SOURCES = chanbar.cpp chanbar.h main.cpp midicontrol.cpp \
 	midicontrol.h mididev.h patbar.cpp patbar.h jackmidi.cpp \

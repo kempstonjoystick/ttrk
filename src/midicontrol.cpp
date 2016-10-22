@@ -151,20 +151,20 @@ void MidiControl::jackTimeCheck( void )
         dt -= tt;
         ++midiclockcounter;
         midiclockcounter %= 3;
-        //if(mididev)
-        //    mididev->syncTick();
+        if(mididev && ttrkSong.isPlaying())
+            mididev->syncTick();
         bcount++;
         bcount %= 24;
         bp = bcount == 0;
 
         if( midiclockcounter == 0 && ttrkSong.isPlaying() ) {
-            //if(!wasplaying)
-            //    mididev->syncStart();
+            if(!wasplaying)
+                mididev->syncStart();
             wasplaying = true;
             doCurrentNotes();
         } else if(wasplaying && !ttrkSong.isPlaying() ) {
             wasplaying = false;
-            //mididev->syncStop();
+            mididev->syncStop();
             shutUp();
         }
     }

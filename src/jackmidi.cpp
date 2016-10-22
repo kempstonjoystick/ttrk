@@ -21,8 +21,11 @@
 #include <cstdio>
 #include <cassert>
 #include <cstring>
+#include <iostream>
+#include <string>
 #include <rtosc/rtosc.h>
 #include <jack/midiport.h>
+#include <mqueue.h>
 
 //TODO make these class specific or whatever
 static char pending_events[100][128];
@@ -33,6 +36,79 @@ static size_t last_time = 0;
 static void *port_buf = 0;
 FILE *f;
 int process(unsigned nframes, void *v);
+
+/* name of the POSIX object referencing the queue */
+#define MSGQOBJ_NAME    "/jackMidiIn"
+/* max length of a message (just for this process) */
+#define MAX_MSG_LEN 512
+
+#define JACK_MIDI_PRIO 10
+
+int JackMidi::queueInit(void) {
+    unsigned int msgprio = 0;
+    time_t currtime;
+    struct mq_attr msgq_attr;
+    mqd_t msgq_id;
+
+    struct mq_attr attr;
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 10;
+    attr.mq_msgsize = MAX_MSG_LEN;
+    attr.mq_curmsgs = 0;
+
+    msgprio=JACK_MIDI_PRIO;
+
+    /* mq_open() for opening an existing queue */
+    msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR);\
+    if (msgq_id == (mqd_t)-1) {
+        perror("In mq_open()");
+        printf("creating queue\n");
+        msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR | O_CREAT | O_EXCL, S_IRWXU | S_IRWXG, &attr);
+    }
+
+    if (msgq_id == (mqd_t)-1) {
+        perror("In mq_open()");
+        return -1;
+    }
+/*
+
+    currtime = time(NULL);
+    snprintf(msgcontent, MAX_MSG_LEN, "Hello from process %u (at %s).", my_pid, ctime(&currtime));
+
+
+    msgsz = mq_send(msgq_id, msgcontent, strlen(msgcontent)+1, msgprio);
+    if (msgsz == -1) {
+        perror("In send()");
+        exit(1);
+    }
+*/
+
+    /* closing the queue        -- mq_close() */
+    mq_close(msgq_id);
+
+    return 0;
+
+}
+
+int JackMidi::queueSend(unsigned char *buf, int len) {
+    mqd_t msgq_id;
+    int res;
+
+    /* mq_open() for opening an existing queue */
+    msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR);\
+    if (msgq_id == (mqd_t)-1) {
+        perror("In mq_open()");
+        return -1;
+    }
+
+    res = mq_send(msgq_id, (const char*) buf, len, JACK_MIDI_PRIO);
+    if (res == -1) {
+        perror("In send()");
+        exit(1);
+    }
+
+    return 0;
+}
 
 JackMidi::JackMidi( void )
     :Fs(0), time(0), client(0),
@@ -47,9 +123,13 @@ JackMidi::JackMidi( void )
 
     jack_status_t jackstatus;
     client = jack_client_open("ttrk", JackNoStartServer, &jackstatus);
-    if(client && !(port = jack_port_register(client, "midi",
+    if(client && !(port = jack_port_register(client, "midi_out",
                                      JACK_DEFAULT_MIDI_TYPE,
                                      JackPortIsOutput | JackPortIsTerminal, 0)))
+        client = NULL;
+    if(client && !(port_in = jack_port_register(client, "midi_in",
+                                     JACK_DEFAULT_MIDI_TYPE,
+                                     JackPortIsInput | JackPortIsTerminal, 0)))
         client = NULL;
     if(client && jack_set_process_callback(client, process, this))
         client = NULL;
@@ -57,6 +137,9 @@ JackMidi::JackMidi( void )
         client = NULL;
     if(client)
         Fs = jack_get_sample_rate(client);
+
+    //initialize the message queue
+    queueInit();
 
     assert(client);
     assert(port);
@@ -146,22 +229,29 @@ void JackMidi::allNotesOff( char chan )
 
 void JackMidi::syncStart( void )
 {
-	int ev = 0xFA;
+  //  char ev[2] = {char(0xFA), 0};
+    //char ev[5] = {0x7f, 0x02, 0x06, 0x03, 0};
+    char ev[2] = {char(0xFA), 0};
+    event(0, "/midi", "m", ev);
 }
 
 void JackMidi::syncStop( void )
 {
-	int ev = 0xFC;
+    //char ev[5] = {0x7f, 0x02, 0x06, 0x03, 0};
+    char ev[2] = {char(0xFC), 0};
+    event(0, "/midi", "m", ev);
 }
 
 void JackMidi::syncContinue( void )
 {
-	int ev = 0xFB;
+	char ev[2] = {char(0xFB), 0};
+    event(0, "/midi", "m", ev);
 }
 
 void JackMidi::syncTick( void )
 {
-	int ev = 0xF8;
+	char ev[2] = {char(0xF8), 0};
+    event(0, "/midi", "m", ev);
 }
     
 void JackMidi::updateStatus( void )
@@ -216,10 +306,21 @@ void dispatch(const char *msg,
     } else { //normal message dispatch
         const char *args = rtosc_argument_string(msg);
         if(!strcmp(msg, "/midi") && !strcmp(args, "m")) {
-            unsigned char *buffer = jack_midi_event_reserve(port_buf, rel_frames, 3);
             rtosc_arg_t arg = rtosc_argument(msg,0);
-            for(int i=0; i<3; ++i)
-                buffer[i] = arg.m[i];
+            
+            if((arg.m[0] & 0xF0) == 0xF0) {
+                unsigned char *buffer = jack_midi_event_reserve(port_buf, rel_frames, 1);
+                buffer[0] = arg.m[0];
+               // printf("Sending %x message\n", buffer[0]);
+            }
+            else {
+                unsigned char *buffer = jack_midi_event_reserve(port_buf, rel_frames, 3);
+                for(int i=0; i<3; ++i)
+                    buffer[i] = arg.m[i];
+                //printf("Sending %x message\n", buffer[0]);
+            }
+            
+            
             //printf("Writing midi event\n");
         }
     }
@@ -244,6 +345,35 @@ void dispatch_events(size_t time)
 int process(unsigned nframes, void *v)
 {
     JackMidi &jm = *(JackMidi*)v;
+    jack_midi_event_t in_event;
+    jack_position_t         position;
+
+    void* inputPortBuf = jack_port_get_buffer( jm.port_in, nframes );
+
+    jack_nframes_t event_count = jack_midi_get_event_count(inputPortBuf);
+    if(event_count > 0)
+    {
+        //printf("We got %d events!\n");
+        for(int i=0; i<event_count; i++)
+        {
+          jack_midi_event_get(&in_event, inputPortBuf, i);
+          
+          // Using "cout" in the JACK process() callback is NOT realtime, this is
+          // used here for simplicity.
+          /*
+          std::cout << "Frame " << position.frame << "  Event: " << i << " SubFrame#: " << in_event.time << " \tMessage:\t"
+                    << (long)in_event.buffer[0] << "\t" << (long)in_event.buffer[1]
+                    << "\t" << (long)in_event.buffer[2] << std::endl;
+          */
+          if(in_event.buffer[0] == 128)
+            jm.queueSend(&in_event.buffer[1], 1);
+          //eventVector.push_back( MidiEvent( position.frame + (long)in_event.time, (unsigned char*)&in_event.buffer ) );
+          
+          //cout << "event.back() frame = " << eventVector.back().frame << endl;
+        }
+    }
+
+
     port_buf = jack_port_get_buffer(jm.port, nframes);
     jack_midi_clear_buffer(port_buf);
     //Read incomming events

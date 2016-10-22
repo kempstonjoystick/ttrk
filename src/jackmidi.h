@@ -74,6 +74,9 @@ public:
 	// Read stuff.
 	MidiDev::InMessage readMessage( void );
 
+	//message queue
+	int queueInit(void);
+	int queueSend(unsigned char *buf, int len) ;
 	// Other stuff.
 	void flush( void );
 
@@ -84,6 +87,7 @@ public:
 
     jack_client_t     *client;
     jack_port_t       *port;
+    jack_port_t       *port_in;
     jack_ringbuffer_t *bToU;
     jack_ringbuffer_t *uToB;
 };

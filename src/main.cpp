@@ -67,6 +67,8 @@ int main( int argc, char **argv )
 
 	// Main loop!
 	for(;;) { 			
+		scr.queueCheck();
+		//break;
 		if( scr.pollScreen() ) break;
 	}
 

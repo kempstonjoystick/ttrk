@@ -282,6 +282,7 @@ Song::Song( void )
 	clear();
     curfilename[0] = '\0';
     patternPlayFlag = false;
+    patternRecFlag = false;
 }
 
 Song::~Song( void )

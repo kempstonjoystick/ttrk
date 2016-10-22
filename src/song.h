@@ -166,6 +166,9 @@ public:
 	int getPatternPlayFlag( void ) const { return patternPlayFlag; }
 	void setPatternPlayNum( int pattern ) { patternPlayNum = pattern; }
 
+	void setPatternRecordFlag( bool flag ) { patternRecFlag = flag; }
+	int getPatternRecordFlag( void ) const { return patternRecFlag; }
+
 	enum Note {
 		NoteEmpty = -1,
 		NoteOff = 128
@@ -189,6 +192,7 @@ private:
 	SongChannel **channels;
     char curfilename[80];
 	bool patternPlayFlag;
+	bool patternRecFlag;
     int patternPlayNum;
 };
 

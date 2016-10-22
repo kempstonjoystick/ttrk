@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <utils.h>
 #include <patbar.h>
+#include <errno.h>
 #include <songbar.h>
 #include <string.h>
 #include <stdlib.h>
@@ -46,6 +47,8 @@ static const int SL_KEY_F12 = 0x1002;
 static const int SL_KEY_SHIFTLEFT = 0x1003;
 static const int SL_KEY_SHIFTRIGHT = 0x1004;
 static const int END_OF_ROWS_MARKER = -99;
+
+
 
 static void inputBuffer( const char *prompt, const char *value )
 {
@@ -114,6 +117,9 @@ Screen::Screen( void )
 	: pos( 0 ), octave( 3 ), patmode( false ), curcol( 0 ), copyPattern( 0 )
 {
 	int ret, i;
+
+	// initialize message handler
+	queueInit();
 
 	// Initialize s-lang stuff.
 	SLsignal( SIGWINCH, sigwinch_handler );
@@ -221,6 +227,72 @@ Screen::~Screen( void )
 {
 	SLsmg_reset_smg();
 	SLang_reset_tty();
+}
+
+void Screen::queueInit(void)
+{
+	struct mq_attr attr;
+	attr.mq_flags = 0;
+	attr.mq_maxmsg = 10;
+	attr.mq_msgsize = 512;
+	attr.mq_curmsgs = 0;
+
+	/* mq_open() for opening an existing queue */
+	msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR);\
+	if (msgq_id == (mqd_t)-1) {
+		perror("In mq_open()");
+		printf("creating queue\n");
+		msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR | O_CREAT | O_EXCL, S_IRWXU | S_IRWXG, &attr);
+	}
+
+	if (msgq_id == (mqd_t)-1) {
+		perror("In mq_open()");
+	}
+
+	printf("message queueid is %d\n", msgq_id);
+	/* closing the queue    --  mq_close() */
+	//mq_close(msgq_id);
+}
+
+void Screen::queueCheck( void ) {
+	 unsigned int sender = JACK_MIDI_PRIO;
+	  struct mq_attr msgq_attr;
+	int msgsz;
+	char msgcontent[512+1];
+
+	/* mq_open() for opening an existing queue */
+/*
+	msgq_id = mq_open(MSGQOBJ_NAME, O_RDWR);\
+	if (msgq_id == (mqd_t)-1) {
+		perror("In mq_open()");
+		return;
+	}
+*/
+    /* getting the attributes from the queue        --  mq_getattr() */
+    mq_getattr(msgq_id, &msgq_attr);
+    //printf("Queue \"%s\":\n\t- stores at most %ld messages\n\t- large at most %ld bytes each\n\t- currently holds %ld messages\n", MSGQOBJ_NAME, msgq_attr.mq_maxmsg, msgq_attr.mq_msgsize, msgq_attr.mq_curmsgs);
+
+    if(msgq_attr.mq_curmsgs)  {
+		/* getting a message */
+		msgsz = mq_receive(msgq_id, msgcontent, 512+1, &sender);
+		if (msgsz == -1) {
+			printf("mq_receive error: %s\n", strerror(errno));
+		}
+		else if(strlen(msgcontent) == 0) {
+			printf("received empty message\n");
+		}
+		else {
+			if(msgsz == 1) {
+				if(ttrkSong.getPatternRecordFlag()) {
+					setNoteNoWait(msgcontent[0]);
+					refresh();
+				}
+			}
+		}
+	}
+
+		/* closing the queue    --  mq_close() */
+//	mq_close(msgq_id);
 }
 
 void Screen::switchMode( void )
@@ -348,24 +420,32 @@ bool Screen::pollScreen( void )
 			    ttrkSong.start(); 
             }
 			break;
-		case SL_KEY_F10:
+		case 'i':
 			ttrkSong.setPatternPlayFlag(false);
             ttrkSong.rewind();
             ttrkSong.start();
             break;
-		case SL_KEY_F11:   
+		case 'o':   
 			ttrkSong.setPatternPlayFlag(false);
 			if(patmode) ttrkSong.rewindTo(pos, patbars[ curcol ]->getCursor()); 
 			else ttrkSong.rewindTo(pos, 0);
 			ttrkSong.start(); 
 			break;
 		//case SL_KEY_F12:   ttrkSong.rewind(); break;
-		case SL_KEY_F12:
+		case 'p':
 			ttrkSong.setPatternPlayFlag(true);
 			ttrkSong.setPatternPlayNum(pos);
 			ttrkSong.rewindTo(pos, 0);
 			ttrkSong.start(); 
 			break;
+		case 'r':
+			if(ttrkSong.getPatternRecordFlag()) {
+				ttrkSong.setPatternRecordFlag(false);
+			}
+			else
+				ttrkSong.setPatternRecordFlag(true);
+			break;
+
 
 		case SL_KEY_DOWN:
 			moveCursorPosition( curstate.cursorrow + 1, curcol ); break;
@@ -427,14 +507,15 @@ bool Screen::pollScreen( void )
 
 		case ' ':
 			if( patmode ) {
-				setNote( Song::NoteEmpty );
+				if(ttrkSong.getPatternRecordFlag()) 
+					setNote( Song::NoteEmpty );
 			} else {
 				//bars[ curcol ]->editPattern( 0 - ( SongMaxPat + 1 ) );
 				bars[ curcol ]->setPattern( 0 );
 				moveCursorPosition( curstate.cursorrow + 1, curcol );
 			}
 			break;
-
+/*
 		case 'a': break;
 		case 'z': setNote( (octave + 1) * 12 + 0 ); break;
 		case 's': setNote( (octave + 1) * 12 + 1 ); break;
@@ -473,7 +554,7 @@ bool Screen::pollScreen( void )
 		case 'o': setNote( (octave + 1) * 12 + 26 ); break;
 		case '0': setNote( (octave + 1) * 12 + 27 ); break;
 		case 'p': setNote( (octave + 1) * 12 + 28 ); break;
-
+*/
 		//case SL_KEY_BACKSPACE: setNote( Song::NoteOff ); break;
 		case SL_KEY_BACKSPACE: 
 			if( patmode ) {
@@ -558,7 +639,10 @@ void Screen::printHeader( void ) const
 		    status = "Playing";
         }
 	} else {
-		status = "Stopped";
+		if(ttrkSong.getPatternRecordFlag())
+			status = "Record ";			
+		else
+			status = "Stopped";
 	}
 
 	if( ttrkSong.isLoopActive() ) {
@@ -987,6 +1071,38 @@ void Screen::pasteSongRowCopy( void )
 	}
 	refresh_bars();
 	showStatusMessage( "Pasted." );
+}
+
+void Screen::setNoteNoWait( int newnote )
+{
+	if( patmode ) {
+		patbars[ curcol ]->setNote( newnote );
+		moveCursorPosition( patstate.cursorrow + 1, curcol );
+		// refresh the screen
+		SLsmg_refresh();
+		// preview the note
+		if((newnote != Song::NoteEmpty) && (newnote != Song::NoteOff) && (!ttrkSong.isPlaying()))
+		{
+			int chan = patbars[curcol]->getChannel()->getMidiChannel();
+			int vel = patbars[curcol]->getChannel()->getVelocity();
+			midiControl.playNote(chan, newnote, vel);
+			midiControl.stopNote(chan, newnote, vel);
+		}
+	} else {
+		if(jam_note != newnote) {
+			if(jam_note) {
+				// a note is playing that we need to stop
+				midiControl.stopNote(jam_chan, jam_note, jam_vel);
+				//fprintf(stderr, "stopping jam - new note detected\n");
+			}
+			jam_note = newnote;
+			jam_chan = bars[curcol]->getChannel()->getMidiChannel();
+			jam_vel =  bars[curcol]->getChannel()->getVelocity();
+			midiControl.playNote(jam_chan, jam_note,jam_vel);
+			//fprintf(stderr, "starting jam - chan:%i note:%i\n", jam_chan+1, jam_note);
+		}
+		ftime(&jam_time);  // still jammin'
+	}
 }
 
 void Screen::setNote( int newnote )
